@@ -1,4 +1,4 @@
-from typing import TypedDict,Annotated,List,Optional,Literal
+from typing import TypedDict,Annotated,List,Optional,Literal,Union
 from operator import add as add_messages
 from langchain_core.messages import BaseMessage
 from langchain.messages import SystemMessage,HumanMessage,AIMessage
@@ -14,14 +14,15 @@ _=load_dotenv()
 
 class AgentState(TypedDict):
     messages:Annotated[List[BaseMessage],add]
-    destination:Optional[str]
-    budget:Optional[int]
-    days:Optional[int]
-    no_of_people:Optional[int]
+    destination:Optional[str]=""
+    budget:Optional[int]=0
+    days:Optional[int]=0
+    no_of_people:Optional[int]=0
 
     final_response:Optional[str]
-    is_relevant:bool
-    missing_fields:List
+    is_relevant:Optional[bool]
+    missing_fields:List[str]
+    llm_calls:Optional[int]
     
 class Extraction(TypedDict):
     is_relevant:bool
@@ -42,39 +43,56 @@ llm=ChatOllama(
 llm_with_structure=filter_llm.with_structured_output(Extraction)
 llm_with_tools= filter_llm.bind_tools([search_places,search_hotels])
 
+def relevancy_check_node(state:AgentState)->AgentState:
+    relevant_words={
+    "trip",
+    "travel",
+    "tour",
+    "vacation",
+    "holiday",
+    "hotel",
+    "flight",
+    "destination",
+    "budget",
+    "days",
+    "honeymoon",
+    "itinerary",
+    "resort",
+    "beach",
+    "mountain",
+    "booking",
+    "stay"
+}
+    return {"is_relevant":any(word in state["messages"][-1] for word in relevant_words)}
+def is_relevant_function(state:AgentState)->str:
+    if state["is_relevant"]:
+        return "relevant"
+    return "irrelevant"
 
-def extraction_node(state:AgentState):
+
+
+async def extraction_node(state:AgentState):
     """_summary_
 
     Args:
         state (AgentState): _description_
     """
-    prompt1=[SystemMessage(content="You are a helping assistant.Your task is to 1.check if user query is relevant or not." \
-    "If relevant mark is_relevant as true else mark it as false." \
-    "Extract destination,number of days,number of people and budget for the tour from the query if they exist " \
-    "else mark the corresponing as None.Return the missing fields also")]+state["messages"]
+    prompt1=[SystemMessage(content="You are a helping assistant.Your task is to Extract destination,number of days,number of people and budget for the tour from the query if they exist else mark the corresponing as None.Return the missing fields also")]+state["messages"]
 
-    result=llm_with_structure.invoke(prompt1)
+    result=await llm_with_structure.ainvoke(prompt1)
 
     print(f"data extracted======= {result}")
     return {
-    "is_relevant": result["is_relevant"],
     "destination": result.get("destination"),
     "budget": result.get("budget"),
     "days": result.get("days"),
     "missing_fields": result.get("missing_fields"),
     "no_of_people": result.get("no_of_people"),
+    "llm_calls": state.get("llm_calls", 0) + 1
 }
+     
 
-def decision_making_function(state:AgentState)->str:
-    print("------relevancy------",state["is_relevant"])
-    if state["is_relevant"]==False:
-        return "irrelevant_query"
-    else:
-        return "relevant_query"
-        
-
-def reasoning_node(state: AgentState) -> AgentState:
+async def reasoning_node(state: AgentState) -> AgentState:
     """
     Analyze the trip details and decide whether tool calling is needed.
     If required, directly call the appropriate tools.
@@ -111,9 +129,9 @@ Days: {state.get('days')}
     # include previous conversation/tool results
     messages.extend(state["messages"])
 
-    result = llm_with_tools.invoke(messages)
+    result = await llm_with_tools.ainvoke(messages)
 
-    return {"messages": [result]}
+    return {"messages": [result], "llm_calls": state.get("llm_calls", 0) + 1}
 
 def should_call_tools(state: AgentState):
     messages = state["messages"]
@@ -131,7 +149,7 @@ def should_call_tools(state: AgentState):
 
 #     return result3
 def irrelevant_node(state:AgentState)->str:
-    return {"messages":[AIMessage(content="I am a travel planning assistant.Ask me travel related queries")]}
+    return {"final_response":AIMessage(content="I am a travel planning assistant.Ask me travel related queries")}
 
 # def filter_node(state:AgentState)->AgentState:
 #     """Analyse the current state messages and summarize the best 3 options to stay and best places to visit.Don't call any tool"""
@@ -141,7 +159,7 @@ def irrelevant_node(state:AgentState)->str:
 
 from langchain_core.messages import ToolMessage, AIMessage
 
-def filter_node(state: AgentState) -> AgentState:
+async def filter_node(state: AgentState) -> AgentState:
     print("inside filter node------------------------------")
 
     cleaned_messages = []
@@ -161,7 +179,7 @@ def filter_node(state: AgentState) -> AgentState:
 
         cleaned_messages.append(msg)
 
-    final_response = filter_llm.invoke(
+    final_response = await filter_llm.ainvoke(
         [
             SystemMessage(
                 content="""
@@ -177,4 +195,4 @@ def filter_node(state: AgentState) -> AgentState:
         ] + cleaned_messages
     )
 
-    return {"final_response": final_response}
+    return {"final_response": final_response, "llm_calls": state.get("llm_calls", 0) + 1}

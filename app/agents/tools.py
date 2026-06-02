@@ -67,30 +67,76 @@
 #         return f"Error fetching travel information for {enquery}: {str(e)}"
 
 
+
+
+# import httpx
+# from langchain_core.tools import tool
+
+
+# @tool(description="Search hotels for a destination")
+# async def search_hotels(destination: str):
+
+#     async with httpx.AsyncClient() as client:
+
+#         # Example external API call
+#         response = await client.get(
+#             f"https://api.example.com/hotels?city={destination}"
+#         )
+
+#         return response.json()
+
+
+# @tool(description="Search tourist attractions at a destination")
+# async def search_places(destination: str):
+
+#     async with httpx.AsyncClient() as client:
+
+#         response = await client.get(
+#             f"https://api.example.com/places?city={destination}"
+#         )
+
+#         return response.json()
+
+
 from langchain.tools import tool
 from langchain_tavily import TavilySearch
 from dotenv import load_dotenv
-_=load_dotenv()
 
-tavily_tool = TavilySearch(max_results=5, topic="general")
+_ = load_dotenv()
+
+tavily_tool = TavilySearch(
+    max_results=5,
+    topic="general"
+)
+
+
 @tool
-def search_places(query) -> list:
+async def search_places(query: str) -> list:
     """
     Search for tourist attractions, sightseeing spots,
     activities, and places to visit.
     """
+
     print("---------------------------inside search places tool")
-    response = tavily_tool.invoke(query)
+
+    response = await tavily_tool.ainvoke(query)
+
     print("places obtained")
+
     return response["results"]
 
+
 @tool
-def search_hotels(query) -> list:
+async def search_hotels(query: str) -> list:
     """
     Search for hotels, resorts, homestays,
     and accommodation options.
     """
+
     print("--------------------------inside search hotels tool")
-    response=tavily_tool.invoke(query)
+
+    response = await tavily_tool.ainvoke(query)
+
     print("hotels obtained")
+
     return response["results"]
